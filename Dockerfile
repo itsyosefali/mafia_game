@@ -5,7 +5,8 @@ WORKDIR /app/client
 COPY client/package.json client/package-lock.json ./
 RUN npm ci
 COPY client/ ./
-RUN npm run build
+# Vite writes dist/; fail the image build if it is missing (COPY --from= would error anyway).
+RUN npm run build && test -f dist/index.html
 
 # ── Stage 2: Production server ──
 FROM node:20-alpine
