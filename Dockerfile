@@ -19,11 +19,13 @@ RUN npm ci --omit=dev
 # Copy server source
 COPY server/ ./server/
 
-# Copy built client from stage 1
-COPY --from=builder /app/client/dist ./client/dist
+# Built assets live outside /app so a bind mount like `-v $PWD:/app` does not
+# replace them (host trees usually omit gitignored client/dist).
+COPY --from=builder /app/client/dist /usr/share/mafia-client
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV CLIENT_DIST=/usr/share/mafia-client
 
 EXPOSE 3000
 
