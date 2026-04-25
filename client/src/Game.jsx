@@ -29,6 +29,7 @@ export default function Game({
   const amAlive = me?.alive;
   const roleInfo = ROLE_INFO[myRole] || {};
   const phaseInfo = PHASE_INFO[phase] || {};
+  const isEnded = phase === 'ended';
 
   useEffect(() => {
     setSelectedTarget(null);
@@ -41,11 +42,11 @@ export default function Game({
   }, [gameState?.log]);
 
   // ── Winner Screen ──
-  if (phase === 'ended') {
+  if (isEnded) {
     const isMafiaWin = gameState.winner === 'mafia';
     return (
       <div className="page-center">
-        <div className="content-wrapper">
+        <div className="content-wrapper" style={{ maxWidth: '700px' }}>
           <div className="card">
             <div className="winner-screen">
               <div className="winner-icon">{isMafiaWin ? '🔴' : '🟢'}</div>
@@ -57,45 +58,46 @@ export default function Game({
                   ? 'The Mafia has taken over the town...'
                   : 'All Mafia members have been eliminated!'}
               </p>
-              <div className="section-title">Final Roles</div>
-              <div className="player-list">
-                {players.map((p, i) => {
-                  const pRole = findPlayerRole(p, gameState);
-                  const ri = ROLE_INFO[pRole] || ROLE_INFO.citizen;
-                  return (
-                    <div className={`player-item ${!p.alive ? 'is-dead' : ''}`} key={p.id}>
-                      <div className="player-avatar" style={{ background: ri.color }}>
-                        {ri.icon}
-                      </div>
-                      <span className="player-name">{p.name}</span>
-                      <span className="player-badge" style={{
-                        background: `${ri.color}22`, color: ri.color
-                      }}>
-                        {pRole}
-                      </span>
-                      {!p.alive && <span className="player-badge badge-dead">Dead</span>}
-                    </div>
-                  );
-                })}
-              </div>
             </div>
+
+            {/* Table layout for final reveal */}
+            <div className="section-title" style={{ textAlign: 'center' }}>All Roles Revealed</div>
+            <div className="table-layout">
+              <div className="table-center ended">
+                <span>🏁</span>
+                <span>GG</span>
+              </div>
+              {players.map((p, i) => {
+                const pRole = p.role || 'citizen';
+                const ri = ROLE_INFO[pRole] || ROLE_INFO.citizen;
+                return (
+                  <div
+                    key={p.id}
+                    className={`table-seat ${!p.alive ? 'is-dead' : ''}`}
+                    style={getSeatPosition(i, players.length)}
+                  >
+                    <div className="seat-avatar" style={{
+                      background: ri.color,
+                      borderColor: ri.color,
+                    }}>
+                      {ri.icon}
+                    </div>
+                    <div className="seat-name">{p.name}</div>
+                    <div className="seat-role" style={{ color: ri.color }}>
+                      {pRole}
+                    </div>
+                    {p.id === socketId && <div className="seat-you">You</div>}
+                    {!p.alive && <div className="seat-dead">💀</div>}
+                  </div>
+                );
+              })}
+            </div>
+
             {renderLog()}
           </div>
         </div>
       </div>
     );
-  }
-
-  function findPlayerRole(p) {
-    if (p.id === socketId) return myRole;
-    if (myRole === 'mafia') {
-      const teammate = gameState?.players?.find(
-        (pl) => pl.id === p.id
-      );
-      // In ended state, server reveals roles via log
-    }
-    // Default: we don't know other roles during game
-    return p.role || 'citizen'; // Server sends roles in ended state
   }
 
   function handleTargetSelect(targetId) {
@@ -117,16 +119,12 @@ export default function Game({
     return players.filter((p) => {
       if (!p.alive) return false;
       if (p.id === socketId) return false;
-      if (phase === 'night' && myRole === 'doctor') {
-        // Doctor can protect self (remove self-filter for doctor)
-        return p.alive;
-      }
       return true;
     });
   }
 
   function getValidTargetsDoctor() {
-    return players.filter((p) => p.alive); // Doctor can protect anyone including self
+    return players.filter((p) => p.alive);
   }
 
   function renderTimer() {
@@ -193,86 +191,63 @@ export default function Game({
       );
     }
 
-    const targets = myRole === 'doctor' && isNight
-      ? getValidTargetsDoctor()
-      : getValidTargets();
-
+    // Prompt + skip vote (target selection handled by table clicks)
     return (
       <>
-        <div className="section-title">
-          {isNight ? `${roleInfo.actionLabel} Target` : 'Vote to Eliminate'}
+        <div className="alert alert-info">
+          {isNight
+            ? `${roleInfo.icon} Click a player on the table to ${roleInfo.actionLabel?.toLowerCase()}`
+            : '🗳️ Click a player on the table to vote'}
         </div>
-        <div className="player-list">
-          {targets.map((p, i) => (
-            <div
-              key={p.id}
-              className={`player-item is-target ${selectedTarget === p.id ? 'is-selected' : ''}`}
-              onClick={() => handleTargetSelect(p.id)}
-            >
-              <div
-                className="player-avatar"
-                style={{ background: `hsl(${(i * 47) % 360}, 60%, 45%)` }}
-              >
-                {p.name.charAt(0).toUpperCase()}
-              </div>
-              <span className="player-name">{p.name}</span>
-              {selectedTarget === p.id && (
-                <span className="player-badge" style={{
-                  background: isNight ? 'rgba(220,38,38,0.2)' : 'rgba(124,58,237,0.2)',
-                  color: isNight ? '#dc2626' : 'var(--accent-light)',
-                }}>
-                  🎯 Target
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="action-bar">
-          <button
-            className={`btn ${phase === 'night' ? 'btn-danger' : 'btn-primary'} btn-block`}
-            disabled={!selectedTarget}
-            onClick={handleAction}
-          >
-            {phase === 'night'
-              ? `${roleInfo.icon} ${roleInfo.actionLabel}`
-              : '🗳️ Cast Vote'}
+        {isVoting && (
+          <button className="btn btn-ghost btn-block btn-sm" onClick={onSkipVote}>
+            ⏭️ Skip Vote
           </button>
-          {isVoting && (
-            <button className="btn btn-ghost btn-block" onClick={onSkipVote}>
-              ⏭️ Skip Vote
-            </button>
-          )}
-        </div>
+        )}
       </>
     );
   }
 
-  function renderPlayerStatus() {
+  // ── Table Layout for Players ──
+  function renderTableLayout() {
+    const isNight = phase === 'night';
+    const isVoting = phase === 'voting';
+    const tableIcon = isNight ? '🌙' : phase === 'day' ? '☀️' : '🗳️';
+
     return (
-      <>
-        <div className="section-title">Players</div>
-        <div className="player-list">
-          {players.map((p, i) => (
-            <div className={`player-item ${!p.alive ? 'is-dead' : ''}`} key={p.id}>
-              <div
-                className="player-avatar"
-                style={{ background: p.alive ? `hsl(${(i * 47) % 360}, 60%, 45%)` : '#333' }}
-              >
+      <div className="table-layout">
+        <div className={`table-center ${isNight ? 'night' : phase === 'day' ? 'day' : 'voting'}`}>
+          <span>{tableIcon}</span>
+          <span>{isNight ? 'Night' : phase === 'day' ? 'Day' : 'Vote'}</span>
+        </div>
+        {players.map((p, i) => {
+          const isMe = p.id === socketId;
+          const isSelected = selectedTarget === p.id;
+          const canTarget = p.alive && !isMe && (isNight || isVoting) && amAlive;
+          const showVoted = p.alive && p.hasVoted && isVoting;
+
+          return (
+            <div
+              key={p.id}
+              className={`table-seat ${!p.alive ? 'is-dead' : ''} ${isSelected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''}`}
+              style={getSeatPosition(i, players.length)}
+              onClick={canTarget ? () => handleTargetSelect(p.id) : undefined}
+            >
+              <div className="seat-avatar" style={{
+                background: p.alive ? `hsl(${(i * 47) % 360}, 60%, 45%)` : '#333',
+                borderColor: isMe ? 'var(--accent-light)' : isSelected ? '#dc2626' : 'transparent',
+              }}>
                 {p.alive ? p.name.charAt(0).toUpperCase() : '💀'}
               </div>
-              <span className="player-name">{p.name}</span>
-              {p.id === socketId && <span className="player-badge badge-you">You</span>}
-              {!p.alive && <span className="player-badge badge-dead">Dead</span>}
-              {p.alive && p.hasVoted && phase === 'voting' && (
-                <span className="player-badge badge-voted">Voted</span>
-              )}
-              {p.alive && p.hasActed && phase === 'night' && (
-                <span className="player-badge badge-acted">Ready</span>
-              )}
+              <div className="seat-name">{p.name}</div>
+              {isMe && <div className="seat-you">You</div>}
+              {!p.alive && <div className="seat-dead">💀</div>}
+              {showVoted && <div className="seat-badge voted">✓</div>}
+              {isSelected && <div className="seat-badge target">🎯</div>}
             </div>
-          ))}
-        </div>
-      </>
+          );
+        })}
+      </div>
     );
   }
 
@@ -307,7 +282,7 @@ export default function Game({
 
   return (
     <div className="page-center">
-      <div className="content-wrapper" style={{ maxWidth: '560px' }}>
+      <div className="content-wrapper" style={{ maxWidth: '700px' }}>
         <div className="card">
           {renderRoleCard()}
           {renderPhase()}
@@ -367,16 +342,47 @@ export default function Game({
             </div>
           )}
 
+          {/* Table layout with players around it */}
+          {renderTableLayout()}
+
           {renderTargetList()}
           {renderDayActions()}
 
-          <div style={{ marginTop: '1.5rem' }}>
-            {renderPlayerStatus()}
-          </div>
+          {/* Action confirm button for table clicks */}
+          {selectedTarget && (phase === 'night' || phase === 'voting') && amAlive && (
+            <div className="action-bar" style={{ marginTop: '1rem' }}>
+              <button
+                className={`btn ${phase === 'night' ? 'btn-danger' : 'btn-primary'} btn-block`}
+                onClick={handleAction}
+              >
+                {phase === 'night'
+                  ? `${roleInfo.icon} ${roleInfo.actionLabel} ${players.find(p => p.id === selectedTarget)?.name}`
+                  : `🗳️ Vote ${players.find(p => p.id === selectedTarget)?.name}`}
+              </button>
+            </div>
+          )}
 
           {renderLog()}
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Calculate seat positions around an oval/circular table
+ */
+function getSeatPosition(index, total) {
+  // Start from top (-90 degrees) and go clockwise
+  const angle = ((index / total) * 360 - 90) * (Math.PI / 180);
+  const radiusX = 42; // % horizontal
+  const radiusY = 38; // % vertical
+
+  const x = 50 + radiusX * Math.cos(angle);
+  const y = 50 + radiusY * Math.sin(angle);
+
+  return {
+    left: `${x}%`,
+    top: `${y}%`,
+  };
 }

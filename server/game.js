@@ -143,6 +143,7 @@ function assignRoles(game) {
  * Get the public game state (safe to send to all clients)
  */
 function getPublicState(game) {
+  const isEnded = game.phase === 'ended';
   return {
     id: game.id,
     phase: game.phase,
@@ -154,7 +155,10 @@ function getPublicState(game) {
       alive: p.alive,
       connected: p.connected,
       hasVoted: p.vote !== null,
-      hasActed: p.action !== null,
+      // Only show hasActed during voting (safe), never during night (leaks roles)
+      hasActed: game.phase === 'night' ? false : p.action !== null,
+      // Reveal roles to everyone when the game ends
+      role: isEnded ? p.role : undefined,
     })),
     nightDeathId: game.nightDeathId,
     dayEliminatedId: game.dayEliminatedId,
@@ -170,8 +174,18 @@ function getPlayerState(game, playerId) {
   const player = game.players.find((p) => p.id === playerId);
   if (!player) return null;
 
+  const state = getPublicState(game);
+
+  // During night, only show YOUR OWN hasActed status
+  if (game.phase === 'night') {
+    state.players = state.players.map((p) => ({
+      ...p,
+      hasActed: p.id === playerId ? player.action !== null : false,
+    }));
+  }
+
   return {
-    ...getPublicState(game),
+    ...state,
     myRole: player.role,
     myVote: player.vote,
     myAction: player.action,
