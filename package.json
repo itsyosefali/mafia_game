@@ -1,7 +1,7 @@
 {
-  "name": "mafia-game-server",
+  "name": "sahara-game-server",
   "version": "1.0.0",
-  "description": "Mafia Online Game Server",
+  "description": "السحارة (Al-Sahara) Online Game Server",
   "main": "server/index.js",
   "scripts": {
     "server": "node server/index.js",

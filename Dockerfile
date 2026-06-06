@@ -17,8 +17,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-# Copy server source
+# Copy server source and shared game catalog (server requires ../shared)
 COPY server/ ./server/
+COPY shared/ ./shared/
 
 # Built assets live outside /app so a bind mount like `-v $PWD:/app` does not
 # replace them (host trees usually omit gitignored client/dist).
