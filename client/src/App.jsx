@@ -2,64 +2,43 @@ import { useState } from 'react';
 import { useGame } from './useGame';
 import Lobby from './Lobby';
 import Game from './Game';
+import { isSoundEnabled, setSoundEnabled } from './sound';
 import './index.css';
 
 export default function App() {
-  const {
-    gameState, connected, error, investigationResult, voteResult, timer,
-    createGame, joinGame, startGame, nightAction, vote, skipVote, advanceToVoting,
-    clearError, clearInvestigation, clearVoteResult, socketId,
-  } = useGame();
+  const game = useGame();
+  const { gameState, connected, error, clearError, createGame, joinGame } = game;
 
-  const [screen, setScreen] = useState('home'); // home | joining
+  const [screen, setScreen] = useState('home');
   const [name, setName] = useState('');
   const [gameCode, setGameCode] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // In-game views
   if (gameState) {
-    if (gameState.phase === 'lobby') {
-      return (
-        <>
-          <BgEffects />
-          <ConnectionStatus connected={connected} />
-          <div className="app-container">
-            {error && <ErrorToast message={error} onClose={clearError} />}
-            <Lobby
-              gameState={gameState}
-              onStart={startGame}
-              socketId={socketId}
-            />
-          </div>
-        </>
-      );
-    }
-
+    const inLobby = gameState.phase === 'lobby';
     return (
       <>
         <BgEffects />
         <ConnectionStatus connected={connected} />
+        <SoundToggle />
         <div className="app-container">
           {error && <ErrorToast message={error} onClose={clearError} />}
-          <Game
-            gameState={gameState}
-            timer={timer}
-            investigationResult={investigationResult}
-            voteResult={voteResult}
-            onNightAction={nightAction}
-            onVote={vote}
-            onSkipVote={skipVote}
-            onAdvanceToVoting={advanceToVoting}
-            onClearInvestigation={clearInvestigation}
-            onClearVoteResult={clearVoteResult}
-            socketId={socketId}
-          />
+          {inLobby ? (
+            <Lobby
+              gameState={gameState}
+              onStart={game.startGame}
+              onAddBot={game.addBot}
+              onRemoveBot={game.removeBot}
+              socketId={game.socketId}
+            />
+          ) : (
+            <Game game={game} />
+          )}
         </div>
       </>
     );
   }
 
-  // ── Home / Join Screen ──
   async function handleCreate(e) {
     e.preventDefault();
     if (!name.trim()) return;
@@ -80,11 +59,12 @@ export default function App() {
     <>
       <BgEffects />
       <ConnectionStatus connected={connected} />
+      <SoundToggle />
       <div className="app-container">
         <div className="page-center">
           <div className="content-wrapper">
-            <h1 className="title">🕵️ Mafia</h1>
-            <p className="subtitle">A game of deception, deduction, and survival</p>
+            <h1 className="title">🧙‍♀️ السحارة</h1>
+            <p className="subtitle">خداع واستنتاج وأدوار خفية من حواري طرابلس القديمة</p>
 
             {error && <ErrorToast message={error} onClose={clearError} />}
 
@@ -93,11 +73,11 @@ export default function App() {
                 <>
                   <form onSubmit={handleCreate}>
                     <div className="form-group">
-                      <label>Your Name</label>
+                      <label>اسمك</label>
                       <input
                         className="input"
                         type="text"
-                        placeholder="Enter your name..."
+                        placeholder="اكتب اسمك..."
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         maxLength={20}
@@ -109,18 +89,18 @@ export default function App() {
                       type="submit"
                       disabled={!name.trim() || loading || !connected}
                     >
-                      {loading ? '⏳ Creating...' : '🎮 Create New Game'}
+                      {loading ? '⏳ جارٍ الإنشاء...' : '🎮 إنشاء لعبة جديدة'}
                     </button>
                   </form>
 
-                  <div className="divider">or join existing</div>
+                  <div className="divider">أو انضم إلى لعبة</div>
 
                   <button
                     className="btn btn-outline btn-block"
                     onClick={() => setScreen('joining')}
                     disabled={!connected}
                   >
-                    🔗 Join with Code
+                    🔗 انضم برمز اللعبة
                   </button>
                 </>
               )}
@@ -128,11 +108,11 @@ export default function App() {
               {screen === 'joining' && (
                 <form onSubmit={handleJoin}>
                   <div className="form-group">
-                    <label>Your Name</label>
+                    <label>اسمك</label>
                     <input
                       className="input"
                       type="text"
-                      placeholder="Enter your name..."
+                      placeholder="اكتب اسمك..."
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       maxLength={20}
@@ -140,15 +120,14 @@ export default function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label>Game Code</label>
+                    <label>رمز اللعبة</label>
                     <input
-                      className="input"
+                      className="input input-code"
                       type="text"
-                      placeholder="e.g. A1B2C3D4"
+                      placeholder="مثال: A1B2C3D4"
                       value={gameCode}
                       onChange={(e) => setGameCode(e.target.value.toUpperCase())}
                       maxLength={8}
-                      style={{ textTransform: 'uppercase', letterSpacing: '0.15em', fontWeight: 600 }}
                     />
                   </div>
                   <button
@@ -156,7 +135,7 @@ export default function App() {
                     type="submit"
                     disabled={!name.trim() || !gameCode.trim() || loading || !connected}
                   >
-                    {loading ? '⏳ Joining...' : '🚀 Join Game'}
+                    {loading ? '⏳ جارٍ الانضمام...' : '🚀 انضم للعبة'}
                   </button>
                   <button
                     className="btn btn-ghost btn-block"
@@ -164,21 +143,19 @@ export default function App() {
                     onClick={() => setScreen('home')}
                     style={{ marginTop: '0.5rem' }}
                   >
-                    ← Back
+                    → رجوع
                   </button>
                 </form>
               )}
 
               {!connected && (
                 <div className="alert alert-error" style={{ marginTop: '1rem' }}>
-                  ⚠️ Connecting to server...
+                  ⚠️ جارٍ الاتصال بالخادم...
                 </div>
               )}
             </div>
 
-            <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              4-10 players • Hidden roles • Social deduction
-            </p>
+            <p className="hint-footer">من ٤ إلى ١٢ لاعباً • أدوار خفية • استنتاج اجتماعي</p>
           </div>
         </div>
       </div>
@@ -187,24 +164,46 @@ export default function App() {
 }
 
 function BgEffects() {
-  return <div className="bg-effects" />;
+  return (
+    <div className="bg-effects">
+      <div className="bg-moon" />
+      <div className="bg-fog" />
+    </div>
+  );
+}
+
+function SoundToggle() {
+  const [on, setOn] = useState(isSoundEnabled());
+  return (
+    <button
+      className="sound-toggle"
+      title={on ? 'كتم الصوت' : 'تشغيل الصوت'}
+      onClick={() => {
+        const next = !on;
+        setSoundEnabled(next);
+        setOn(next);
+      }}
+    >
+      {on ? '🔊' : '🔇'}
+    </button>
+  );
 }
 
 function ConnectionStatus({ connected }) {
   return (
     <div className="connection-status">
       <div className={`status-dot ${connected ? 'online' : 'offline'}`} />
-      {connected ? 'Connected' : 'Offline'}
+      {connected ? 'متصل' : 'غير متصل'}
     </div>
   );
 }
 
 function ErrorToast({ message, onClose }) {
   return (
-    <div style={{ position: 'fixed', top: '1rem', left: '50%', transform: 'translateX(-50%)', zIndex: 200, maxWidth: '400px', width: '90%' }}>
+    <div className="error-toast-wrap">
       <div className="alert alert-error" style={{ cursor: 'pointer' }} onClick={onClose}>
         ⚠️ {message}
-        <span style={{ marginLeft: 'auto', opacity: 0.6 }}>✕</span>
+        <span style={{ marginInlineStart: 'auto', opacity: 0.6 }}>✕</span>
       </div>
     </div>
   );

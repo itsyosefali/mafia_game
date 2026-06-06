@@ -1,388 +1,242 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import GameBoard from './components/GameBoard';
+import HandPanel from './components/HandPanel';
+import NightOverlay from './components/NightOverlay';
+import EndScreen from './components/EndScreen';
+import { TrialModal, AttackModal, LastWordsModal } from './components/Modals';
+import Card from './components/Card';
+import { playSound } from './sound';
 
-const ROLE_INFO = {
-  mafia: { icon: '🔪', color: '#dc2626', desc: 'Choose a target to eliminate', actionLabel: 'Kill' },
-  doctor: { icon: '💉', color: '#16a34a', desc: 'Choose a player to protect', actionLabel: 'Protect' },
-  detective: { icon: '🔍', color: '#2563eb', desc: 'Choose a player to investigate', actionLabel: 'Investigate' },
-  citizen: { icon: '👤', color: '#6b7280', desc: 'Wait for morning', actionLabel: null },
-};
+export default function Game({ game }) {
+  const { gameState, timer, drawnCards, clearDrawnCards } = game;
+  const [selectedUid, setSelectedUid] = useState(null);
+  const [flash, setFlash] = useState(null);
 
-const PHASE_INFO = {
-  night: { icon: '🌙', label: 'Night Phase', className: 'phase-night' },
-  day: { icon: '☀️', label: 'Day Phase', className: 'phase-day' },
-  voting: { icon: '🗳️', label: 'Voting Phase', className: 'phase-voting' },
-  ended: { icon: '🏁', label: 'Game Over', className: 'phase-ended' },
-};
-
-export default function Game({
-  gameState, timer, investigationResult, voteResult,
-  onNightAction, onVote, onSkipVote, onAdvanceToVoting,
-  onClearInvestigation, onClearVoteResult, socketId,
-}) {
-  const [selectedTarget, setSelectedTarget] = useState(null);
-  const logRef = useRef(null);
-  const myRole = gameState?.myRole;
+  const me = gameState?.me;
   const phase = gameState?.phase;
-  const players = gameState?.players || [];
-  const isHost = socketId === gameState?.hostId;
-  const me = players.find((p) => p.id === socketId);
-  const amAlive = me?.alive;
-  const roleInfo = ROLE_INFO[myRole] || {};
-  const phaseInfo = PHASE_INFO[phase] || {};
-  const isEnded = phase === 'ended';
 
+  // Play a sound when the phase changes (external system; no React state set here).
+  const soundPhase = useRef(phase);
   useEffect(() => {
-    setSelectedTarget(null);
-  }, [phase]);
-
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+    if (phase && phase !== soundPhase.current) {
+      soundPhase.current = phase;
+      if (phase === 'night') playSound('night');
+      else if (phase === 'day') playSound('day');
+      else if (phase === 'trial') playSound('trial');
+      else if (phase === 'attack_response') playSound('attack');
+      else if (phase === 'ended') playSound(gameState?.winner === me?.team ? 'win' : 'lose');
     }
+  }, [phase, gameState?.winner, me?.team]);
+
+  // Phase-transition flash: derived at render time from the previous phase
+  // (avoids the "setState in effect" cascade rule); cleared on animation end.
+  const flashPhase = useRef(phase);
+  if (phase !== flashPhase.current) {
+    flashPhase.current = phase;
+    if (phase === 'night') setFlash({ icon: '🌙', label: 'حلّ الليل' });
+    else if (phase === 'day') setFlash({ icon: '☀️', label: 'أشرق النهار' });
+  }
+
+  // Play a thud when the public log gains a death entry.
+  const prevLogLen = useRef(gameState?.log?.length || 0);
+  useEffect(() => {
+    const log = gameState?.log || [];
+    if (log.length > prevLogLen.current) {
+      const fresh = log.slice(prevLogLen.current);
+      if (fresh.some((e) => e.type === 'death')) playSound('death');
+    }
+    prevLogLen.current = log.length;
   }, [gameState?.log]);
 
-  // ── Winner Screen ──
-  if (isEnded) {
-    const isMafiaWin = gameState.winner === 'mafia';
-    return (
-      <div className="page-center">
-        <div className="content-wrapper" style={{ maxWidth: '700px' }}>
-          <div className="card">
-            <div className="winner-screen">
-              <div className="winner-icon">{isMafiaWin ? '🔴' : '🟢'}</div>
-              <div className={`winner-title ${isMafiaWin ? 'winner-mafia' : 'winner-citizens'}`}>
-                {isMafiaWin ? 'Mafia Wins!' : 'Citizens Win!'}
-              </div>
-              <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                {isMafiaWin
-                  ? 'The Mafia has taken over the town...'
-                  : 'All Mafia members have been eliminated!'}
-              </p>
-            </div>
-
-            {/* Table layout for final reveal */}
-            <div className="section-title" style={{ textAlign: 'center' }}>All Roles Revealed</div>
-            <div className="table-layout">
-              <div className="table-center ended">
-                <span>🏁</span>
-                <span>GG</span>
-              </div>
-              {players.map((p, i) => {
-                const pRole = p.role || 'citizen';
-                const ri = ROLE_INFO[pRole] || ROLE_INFO.citizen;
-                return (
-                  <div
-                    key={p.id}
-                    className={`table-seat ${!p.alive ? 'is-dead' : ''}`}
-                    style={getSeatPosition(i, players.length)}
-                  >
-                    <div className="seat-avatar" style={{
-                      background: ri.color,
-                      borderColor: ri.color,
-                    }}>
-                      {ri.icon}
-                    </div>
-                    <div className="seat-name">{p.name}</div>
-                    <div className="seat-role" style={{ color: ri.color }}>
-                      {pRole}
-                    </div>
-                    {p.id === socketId && <div className="seat-you">You</div>}
-                    {!p.alive && <div className="seat-dead">💀</div>}
-                  </div>
-                );
-              })}
-            </div>
-
-            {renderLog()}
-          </div>
-        </div>
-      </div>
-    );
+  // Clear any in-progress card selection whenever the turn/phase/event changes.
+  const resetKey = `${phase}|${gameState?.currentTurnPlayerId}|${gameState?.pendingEvent?.type}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  if (resetKey !== prevResetKey) {
+    setPrevResetKey(resetKey);
+    setSelectedUid(null);
   }
 
-  function handleTargetSelect(targetId) {
-    if (!amAlive) return;
-    setSelectedTarget(targetId);
+  useEffect(() => {
+    if (!drawnCards) return;
+    const t = setTimeout(() => clearDrawnCards(), 3000);
+    return () => clearTimeout(t);
+  }, [drawnCards, clearDrawnCards]);
+
+  if (!gameState || !me) return null;
+
+  if (phase === 'ended') return <EndScreen gameState={gameState} />;
+
+  const pending = gameState.pendingEvent;
+  const isMyTurn = me.isMyTurn && me.alive;
+  const selectedCard = selectedUid ? me.hand.find((c) => c.uid === selectedUid)?.card : null;
+  const needsTarget = selectedCard && selectedCard.target === 'player';
+
+  function isTargetable(p) {
+    if (!needsTarget) return false;
+    return p.alive && p.id !== me.id;
   }
 
-  async function handleAction() {
-    if (!selectedTarget) return;
-    if (phase === 'night') {
-      await onNightAction(selectedTarget);
-    } else if (phase === 'voting') {
-      await onVote(selectedTarget);
-    }
-    setSelectedTarget(null);
+  function onSelectTarget(targetId) {
+    if (!selectedUid) return;
+    playSound('play');
+    game.playCard(selectedUid, { targetId });
+    setSelectedUid(null);
   }
 
-  function getValidTargets() {
-    return players.filter((p) => {
-      if (!p.alive) return false;
-      if (p.id === socketId) return false;
-      return true;
-    });
+  function playSelfOrNone() {
+    if (!selectedUid) return;
+    playSound('play');
+    game.playCard(selectedUid, {});
+    setSelectedUid(null);
   }
 
-  function getValidTargetsDoctor() {
-    return players.filter((p) => p.alive);
+  function handleDraw() {
+    playSound('draw');
+    game.drawCards();
   }
 
-  function renderTimer() {
-    if (!timer || timer.remaining <= 0) return null;
-    return (
-      <div className="timer">
-        <span>⏱️</span>
-        <span className={`timer-value ${timer.remaining <= 10 ? 'urgent' : ''}`}>
-          {timer.remaining}s
-        </span>
-      </div>
-    );
+  function handleEndTurn() {
+    playSound('turn');
+    game.endTurn();
   }
 
-  function renderRoleCard() {
-    return (
-      <div className={`role-card role-${myRole}`}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
-          <span style={{ fontSize: '1.8rem' }}>{roleInfo.icon}</span>
-          <div>
-            <div className="role-name" style={{ color: roleInfo.color, fontSize: '1rem' }}>
-              {myRole}
-            </div>
-            <div className="role-desc" style={{ fontSize: '0.75rem' }}>{roleInfo.desc}</div>
-          </div>
-        </div>
-        {!amAlive && (
-          <div style={{ marginTop: '0.5rem', color: 'var(--red)', fontWeight: 600, fontSize: '0.85rem' }}>
-            💀 You are dead — spectating
-          </div>
-        )}
-      </div>
-    );
-  }
+  const showNight = phase === 'night';
+  const showTrial = pending?.type === 'trial';
+  const showAttack = pending?.type === 'attack_response';
+  const showLastWords = pending?.type === 'last_words';
 
-  function renderPhase() {
-    return (
-      <div className={`phase-banner ${phaseInfo.className}`}>
-        {phaseInfo.icon} {phaseInfo.label} — Round {gameState.round}
-      </div>
-    );
-  }
-
-  function renderTargetList() {
-    const isNight = phase === 'night';
-    const isVoting = phase === 'voting';
-
-    if (!amAlive) return null;
-    if (isNight && myRole === 'citizen') {
-      return (
-        <div className="alert alert-info">
-          👤 You're a citizen. Wait for the night to end.
-        </div>
-      );
-    }
-    if (phase === 'day') return null;
-
-    const hasActed = isNight ? me?.hasActed : me?.hasVoted;
-    if (hasActed) {
-      return (
-        <div className="alert alert-success">
-          ✅ {isNight ? 'Action submitted!' : 'Vote cast!'} Waiting for others...
-        </div>
-      );
-    }
-
-    // Prompt + skip vote (target selection handled by table clicks)
-    return (
-      <>
-        <div className="alert alert-info">
-          {isNight
-            ? `${roleInfo.icon} Click a player on the table to ${roleInfo.actionLabel?.toLowerCase()}`
-            : '🗳️ Click a player on the table to vote'}
-        </div>
-        {isVoting && (
-          <button className="btn btn-ghost btn-block btn-sm" onClick={onSkipVote}>
-            ⏭️ Skip Vote
-          </button>
-        )}
-      </>
-    );
-  }
-
-  // ── Table Layout for Players ──
-  function renderTableLayout() {
-    const isNight = phase === 'night';
-    const isVoting = phase === 'voting';
-    const tableIcon = isNight ? '🌙' : phase === 'day' ? '☀️' : '🗳️';
-
-    return (
-      <div className="table-layout">
-        <div className={`table-center ${isNight ? 'night' : phase === 'day' ? 'day' : 'voting'}`}>
-          <span>{tableIcon}</span>
-          <span>{isNight ? 'Night' : phase === 'day' ? 'Day' : 'Vote'}</span>
-        </div>
-        {players.map((p, i) => {
-          const isMe = p.id === socketId;
-          const isSelected = selectedTarget === p.id;
-          const canTarget = p.alive && !isMe && (isNight || isVoting) && amAlive;
-          const showVoted = p.alive && p.hasVoted && isVoting;
-
-          return (
-            <div
-              key={p.id}
-              className={`table-seat ${!p.alive ? 'is-dead' : ''} ${isSelected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''}`}
-              style={getSeatPosition(i, players.length)}
-              onClick={canTarget ? () => handleTargetSelect(p.id) : undefined}
-            >
-              <div className="seat-avatar" style={{
-                background: p.alive ? `hsl(${(i * 47) % 360}, 60%, 45%)` : '#333',
-                borderColor: isMe ? 'var(--accent-light)' : isSelected ? '#dc2626' : 'transparent',
-              }}>
-                {p.alive ? p.name.charAt(0).toUpperCase() : '💀'}
-              </div>
-              <div className="seat-name">{p.name}</div>
-              {isMe && <div className="seat-you">You</div>}
-              {!p.alive && <div className="seat-dead">💀</div>}
-              {showVoted && <div className="seat-badge voted">✓</div>}
-              {isSelected && <div className="seat-badge target">🎯</div>}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  function renderDayActions() {
-    if (phase !== 'day') return null;
-    return (
-      <div style={{ marginTop: '1rem' }}>
-        <div className="alert alert-warning">
-          💬 Discussion time — talk and figure out who the Mafia is!
-        </div>
-        {isHost && (
-          <button className="btn btn-primary btn-block" onClick={onAdvanceToVoting} style={{ marginTop: '0.5rem' }}>
-            🗳️ Move to Voting
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  function renderLog() {
-    if (!gameState?.log || gameState.log.length === 0) return null;
-    return (
-      <div className="game-log" ref={logRef}>
-        {gameState.log.map((entry, i) => (
-          <div key={i} className={`log-entry log-${entry.type}`}>
-            {entry.message}
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const myRoleLabel = me.isMasterWitch
+    ? 'كبير السحرة'
+    : me.isWitch
+    ? 'سحّارة'
+    : me.isSheikh
+    ? 'الشيخ'
+    : 'مواطن';
+  const myRoleClass = me.isWitch ? 'role-sahara' : me.isSheikh ? 'role-sheikh' : 'role-citizen';
 
   return (
-    <div className="page-center">
-      <div className="content-wrapper" style={{ maxWidth: '700px' }}>
-        <div className="card">
-          {renderRoleCard()}
-          {renderPhase()}
-          {renderTimer()}
-
-          {/* Investigation Result Modal */}
-          {investigationResult && (
-            <div className="modal-overlay" onClick={onClearInvestigation}>
-              <div className="modal" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🔍</div>
-                <h3 style={{ marginBottom: '0.5rem', fontFamily: 'Outfit, sans-serif' }}>
-                  Investigation Result
-                </h3>
-                <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                  <strong>{investigationResult.targetName}</strong> is...
-                </p>
-                <div style={{
-                  fontSize: '1.5rem', fontWeight: 700, fontFamily: 'Outfit, sans-serif',
-                  color: investigationResult.isMafia ? '#dc2626' : '#22c55e',
-                  marginBottom: '1rem'
-                }}>
-                  {investigationResult.isMafia ? '🔴 MAFIA!' : '🟢 NOT Mafia'}
-                </div>
-                <button className="btn btn-primary" onClick={onClearInvestigation}>
-                  Got it
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Vote Result Modal */}
-          {voteResult && (
-            <div className="modal-overlay" onClick={onClearVoteResult}>
-              <div className="modal" onClick={(e) => e.stopPropagation()}>
-                <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>
-                  {voteResult.tie ? '⚖️' : '⚰️'}
-                </div>
-                <h3 style={{ marginBottom: '0.75rem', fontFamily: 'Outfit, sans-serif' }}>
-                  {voteResult.tie ? 'Vote Tied!' : 'Eliminated!'}
-                </h3>
-                {voteResult.eliminated && (
-                  <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-                    <strong>{voteResult.eliminated.name}</strong> was eliminated.
-                    <br />
-                    <span style={{ color: ROLE_INFO[voteResult.eliminated.role]?.color }}>
-                      They were a {voteResult.eliminated.role}
-                    </span>
-                  </p>
-                )}
-                {voteResult.tie && (
-                  <p style={{ color: 'var(--text-secondary)' }}>No one was eliminated.</p>
-                )}
-                <button className="btn btn-primary" onClick={onClearVoteResult} style={{ marginTop: '1rem' }}>
-                  Continue
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Table layout with players around it */}
-          {renderTableLayout()}
-
-          {renderTargetList()}
-          {renderDayActions()}
-
-          {/* Action confirm button for table clicks */}
-          {selectedTarget && (phase === 'night' || phase === 'voting') && amAlive && (
-            <div className="action-bar" style={{ marginTop: '1rem' }}>
-              <button
-                className={`btn ${phase === 'night' ? 'btn-danger' : 'btn-primary'} btn-block`}
-                onClick={handleAction}
-              >
-                {phase === 'night'
-                  ? `${roleInfo.icon} ${roleInfo.actionLabel} ${players.find(p => p.id === selectedTarget)?.name}`
-                  : `🗳️ Vote ${players.find(p => p.id === selectedTarget)?.name}`}
-              </button>
-            </div>
-          )}
-
-          {renderLog()}
+    <div className="game-screen">
+      {flash && (
+        <div
+          className={`phase-flash flash-${phase}`}
+          key={`${phase}-${gameState.round}`}
+          onAnimationEnd={(e) => {
+            if (e.animationName === 'flashFade') setFlash(null);
+          }}
+        >
+          <div className="phase-flash-icon">{flash.icon}</div>
+          <div className="phase-flash-label">{flash.label}</div>
         </div>
+      )}
+      <GameBoard
+        gameState={gameState}
+        meId={me.id}
+        selectable={needsTarget}
+        selectedTargetId={null}
+        isTargetable={isTargetable}
+        onSelectTarget={onSelectTarget}
+        timer={timer}
+      />
+
+      {drawnCards && drawnCards.length > 0 && (
+        <div className="drawn-toast">
+          سحبت: {drawnCards.map((c) => c.card?.name).filter(Boolean).join('، ') || 'كرت أسود نُفّذ فوراً'}
+        </div>
+      )}
+
+      <div className="bottom-panel">
+        <div className="me-bar">
+          <span className={`me-role ${myRoleClass}`}>أنت: {myRoleLabel}</span>
+          {me.hasGreatness && <span className="me-flag">👑 العظمة</span>}
+          <div className="me-trials">
+            {me.trials.map((t) => (
+              <Card key={t.uid} card={t.card} size="sm" dimmed={t.revealed} />
+            ))}
+          </div>
+        </div>
+
+        {me.alive ? (
+          <>
+            <HandPanel
+              hand={me.hand}
+              selectedUid={selectedUid}
+              onSelectCard={(uid) => setSelectedUid(uid === selectedUid ? null : uid)}
+              disabled={!isMyTurn || !!pending || phase !== 'day'}
+            />
+
+            <div className="action-bar">
+              {phase === 'day' && isMyTurn && !pending && (
+                <>
+                  {!selectedCard && (
+                    <>
+                      <button className="btn btn-primary" onClick={handleDraw}>
+                        🂠 اسحب كرتين
+                      </button>
+                      <button className="btn btn-ghost" onClick={handleEndTurn}>
+                        ⏭️ أنهِ الدور
+                      </button>
+                    </>
+                  )}
+                  {selectedCard && !needsTarget && (
+                    <>
+                      <button className="btn btn-success" onClick={playSelfOrNone}>
+                        ▶️ العب {selectedCard.name}
+                      </button>
+                      <button className="btn btn-ghost" onClick={() => setSelectedUid(null)}>
+                        إلغاء
+                      </button>
+                    </>
+                  )}
+                  {selectedCard && needsTarget && (
+                    <>
+                      <span className="action-hint">🎯 اختر هدفاً لـ {selectedCard.name}</span>
+                      <button className="btn btn-ghost" onClick={() => setSelectedUid(null)}>
+                        إلغاء
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+              {phase === 'day' && !isMyTurn && !pending && (
+                <span className="action-hint">⏳ دور {nameOf(gameState, gameState.currentTurnPlayerId)}</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="spectating">💀 أنت خارج اللعبة الآن — تتفرّج بصمت.</div>
+        )}
       </div>
+
+      <GameLog log={gameState.log} />
+
+      {showNight && (
+        <NightOverlay
+          gameState={gameState}
+          onWitchVote={(id) => game.witchVote(id)}
+          onSheikhProtect={(id) => game.sheikhProtect(id)}
+        />
+      )}
+      {showTrial && <TrialModal gameState={gameState} onReveal={(i) => game.resolveTrial(i)} />}
+      {showAttack && <AttackModal gameState={gameState} onRespond={(defend) => game.attackResponse(defend)} />}
+      {showLastWords && <LastWordsModal gameState={gameState} onSubmit={(w) => game.submitLastWords(w)} />}
     </div>
   );
 }
 
-/**
- * Calculate seat positions around an oval/circular table
- */
-function getSeatPosition(index, total) {
-  // Start from top (-90 degrees) and go clockwise
-  const angle = ((index / total) * 360 - 90) * (Math.PI / 180);
-  const radiusX = 42; // % horizontal
-  const radiusY = 38; // % vertical
+function nameOf(gameState, id) {
+  const p = (gameState.players || []).find((x) => x.id === id);
+  return p ? p.name : '؟';
+}
 
-  const x = 50 + radiusX * Math.cos(angle);
-  const y = 50 + radiusY * Math.sin(angle);
-
-  return {
-    left: `${x}%`,
-    top: `${y}%`,
-  };
+function GameLog({ log }) {
+  const recent = (log || []).slice(-30);
+  return (
+    <div className="game-log">
+      {recent.map((entry, i) => (
+        <div key={i} className={`log-entry log-${entry.type}`}>
+          {entry.message}
+        </div>
+      ))}
+    </div>
+  );
 }
