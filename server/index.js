@@ -42,7 +42,7 @@ setupSockets(io);
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`\n🕵️  Mafia Game Server running on http://localhost:${PORT}`);
+  console.log(`\n🧙‍♀️  السحارة (Al-Sahara) server running on http://localhost:${PORT}`);
   console.log(`   Waiting for connections...\n`);
   if (!fs.existsSync(indexHtml)) {
     console.error(
